@@ -1,0 +1,11 @@
+app:
+  name: "SimpleApp"
+  version: "1.0.0"
+  description: "A simple example app using PluginForge"
+  default_language: "en"
+
+plugins:
+  entry_point_group: "simpleapp.plugins"
+  enabled:
+    - "hello"
+  disabled: []

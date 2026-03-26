@@ -1,0 +1,10 @@
+app:
+  title: "Simple App"
+  subtitle: "A PluginForge Demo"
+plugins:
+  hello:
+    label: "Hello Plugin"
+    description: "Says hello to the world"
+common:
+  save: "Save"
+  cancel: "Cancel"
