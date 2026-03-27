@@ -258,7 +258,7 @@ Hook-Specs werden versioniert. Plugins deklarieren `api_version: "1"`. Wenn sich
 ## 5. Abhaengigkeiten (minimal)
 
 **Runtime:**
-- `pluggy >= 1.4.0` (Hook-System)
+- `pluggy >= 1.5.0` (Hook-System)
 - `pyyaml >= 6.0` (YAML-Config)
 
 **Optional:**

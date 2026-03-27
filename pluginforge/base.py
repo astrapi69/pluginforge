@@ -14,6 +14,7 @@ class BasePlugin(ABC):
         description: Human-readable description.
         author: Plugin author.
         depends_on: List of plugin names this plugin depends on.
+        app_config: Global application configuration, populated during init().
         config: Plugin configuration, populated during init().
     """
 
@@ -23,6 +24,7 @@ class BasePlugin(ABC):
     description: str = ""
     author: str = ""
     depends_on: list[str] = []
+    app_config: dict[str, Any] = {}
     config: dict[str, Any] = {}
 
     def init(self, app_config: dict[str, Any], plugin_config: dict[str, Any]) -> None:
@@ -32,6 +34,7 @@ class BasePlugin(ABC):
             app_config: The global application configuration.
             plugin_config: Plugin-specific configuration from YAML.
         """
+        self.app_config = app_config
         self.config = plugin_config
 
     def activate(self) -> None:

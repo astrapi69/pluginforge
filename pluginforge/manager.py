@@ -81,9 +81,7 @@ class PluginManager:
 
         missing = check_missing_dependencies(plugins)
         for name, deps in missing.items():
-            logger.warning(
-                "Plugin '%s' has missing dependencies %s, skipping", name, deps
-            )
+            logger.warning("Plugin '%s' has missing dependencies %s, skipping", name, deps)
             del plugins[name]
 
         try:
@@ -123,9 +121,7 @@ class PluginManager:
 
         missing = check_missing_dependencies(plugins_map)
         for name, deps in missing.items():
-            logger.warning(
-                "Plugin '%s' has missing dependencies %s, skipping", name, deps
-            )
+            logger.warning("Plugin '%s' has missing dependencies %s, skipping", name, deps)
             del plugins_map[name]
 
         order = resolve_dependencies(plugins_map)

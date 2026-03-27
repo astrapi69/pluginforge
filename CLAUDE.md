@@ -8,12 +8,12 @@ YAML-Config, Lifecycle, Enable/Disable, Abhaengigkeiten, FastAPI-Integration, i1
 **Repository:** https://github.com/astrapi69/pluginforge
 **Architektur:** docs/ARCHITECTURE.md (lesen vor jeder Aenderung)
 **Lizenz:** MIT
-**Ziel:** v0.1.0 auf PyPI publizieren
+**Ziel:** v0.2.0 auf PyPI publizieren
 
 ## Tech Stack
 
 - Python 3.11+
-- pluggy >= 1.4.0 (Hook-System, NICHT selbst bauen)
+- pluggy >= 1.5.0 (Hook-System, NICHT selbst bauen - ab 1.1.0 new-style Hook Wrapper mit explizitem wrapper=True)
 - PyYAML >= 6.0 (Konfiguration)
 - FastAPI (optional, nur wenn importiert)
 - Alembic (optional, nur wenn importiert)
@@ -53,6 +53,36 @@ pluginforge/
 - Logging: `logging.getLogger(__name__)`, keine eigene Log-Config
 - Optional Dependencies: Lazy Import mit klarer Fehlermeldung wenn nicht installiert
 - Keine hartcodierten Strings, alles via Config
+
+## BasePlugin + pluggy Hook-Integration (Design-Klarstellung)
+
+Ein Plugin ist beides gleichzeitig:
+- Eine Klasse die `BasePlugin` erbt (Lifecycle: init, activate, deactivate)
+- Ein Objekt mit `@hookimpl`-dekorierten Methoden (pluggy Hook-System)
+
+PluginForge managed den Lifecycle drumherum, pluggy managed die Hooks.
+
+```python
+import pluggy
+from pluginforge import BasePlugin
+
+hookimpl = pluggy.HookimplMarker("myapp")
+
+class ExportPlugin(BasePlugin):
+    name = "export"
+    depends_on = ["storage"]
+
+    def activate(self) -> None:
+        # PluginForge Lifecycle
+        self.engine = self.config.get("engine", "default")
+
+    @hookimpl
+    def on_document_save(self, document: dict) -> None:
+        # pluggy Hook - wird via pm.call_hook("on_document_save", ...) aufgerufen
+        ...
+```
+
+Wichtig: Ab pluggy 1.1.0 brauchen Hook Wrapper explizit `wrapper=True`.
 
 ## Kernlogik
 
@@ -108,7 +138,7 @@ Fehlende Config-Dateien sind kein Fehler, nur leere Defaults.
 ```toml
 [tool.poetry]
 name = "pluginforge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Application-agnostic plugin framework built on pluggy"
 authors = ["Asterios Raptis"]
 license = "MIT"
@@ -128,7 +158,7 @@ packages = [{ include = "pluginforge" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-pluggy = "^1.4.0"
+pluggy = "^1.5.0"
 pyyaml = "^6.0"
 
 [tool.poetry.group.dev.dependencies]
@@ -162,7 +192,6 @@ lint:           poetry run ruff check pluginforge/ tests/
 format:         poetry run ruff format pluginforge/ tests/
 typecheck:      poetry run mypy pluginforge/ (optional, spaeter)
 build:          poetry build
-publish-test:   poetry publish -r testpypi
 publish:        poetry publish
 clean:          rm -rf dist/ .pytest_cache/ .coverage
 ```

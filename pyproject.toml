@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pluginforge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Application-agnostic plugin framework built on pluggy"
 authors = ["Asterios Raptis"]
 license = "MIT"
@@ -20,7 +20,7 @@ packages = [{ include = "pluginforge" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-pluggy = "^1.4.0"
+pluggy = "^1.5.0"
 pyyaml = "^6.0"
 
 [tool.poetry.group.dev.dependencies]

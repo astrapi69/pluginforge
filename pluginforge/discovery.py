@@ -87,9 +87,7 @@ def resolve_dependencies(
 
     def visit(node: str) -> None:
         if node in in_stack:
-            raise CircularDependencyError(
-                f"Circular dependency detected involving plugin '{node}'"
-            )
+            raise CircularDependencyError(f"Circular dependency detected involving plugin '{node}'")
         if node in visited:
             return
         in_stack.add(node)
