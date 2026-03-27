@@ -93,6 +93,8 @@ pm.mount_routes(app)  # Routes at /api/plugins/{name}/
 - **Alembic Support** - Collect migration directories from plugins
 - **i18n** - Multi-language strings from YAML with fallback
 
+For detailed documentation, see the [Wiki](https://github.com/astrapi69/pluginforge/wiki).
+
 ## Entry Point Discovery
 
 Register plugins as entry points in your `pyproject.toml`:
@@ -123,20 +125,31 @@ pm.get_text("common.save", "en")  # "Save"
 pm.get_text("common.save", "de")  # "Speichern"
 ```
 
+## Documentation
+
+The full documentation is available in the [Wiki](https://github.com/astrapi69/pluginforge/wiki):
+
+- [Getting Started](https://github.com/astrapi69/pluginforge/wiki/Getting-Started)
+- [BasePlugin](https://github.com/astrapi69/pluginforge/wiki/BasePlugin)
+- [PluginManager](https://github.com/astrapi69/pluginforge/wiki/PluginManager)
+- [Configuration](https://github.com/astrapi69/pluginforge/wiki/Configuration)
+- [Discovery and Dependencies](https://github.com/astrapi69/pluginforge/wiki/Discovery-and-Dependencies)
+- [Lifecycle](https://github.com/astrapi69/pluginforge/wiki/Lifecycle)
+- [Hooks](https://github.com/astrapi69/pluginforge/wiki/Hooks)
+- [FastAPI Integration](https://github.com/astrapi69/pluginforge/wiki/FastAPI-Integration)
+- [Alembic Integration](https://github.com/astrapi69/pluginforge/wiki/Alembic-Integration)
+- [i18n](https://github.com/astrapi69/pluginforge/wiki/i18n)
+- [Examples](https://github.com/astrapi69/pluginforge/wiki/Examples)
+
 ## Development
 
 ```bash
-# Install dependencies
-poetry install --with dev
-
-# Run tests
-poetry run pytest
-
-# Lint
-poetry run ruff check pluginforge/ tests/
-
-# Format
-poetry run ruff format pluginforge/ tests/
+make install-dev   # Install with dev dependencies
+make test          # Run tests
+make lint          # Run ruff linter
+make format        # Format code
+make ci            # Full CI pipeline (lint + format-check + test)
+make help          # Show all available targets
 ```
 
 ## License
