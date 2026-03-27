@@ -305,18 +305,90 @@ class PluginManager:
     def call_hook(self, hook_name: str, **kwargs: Any) -> list[Any]:
         """Call a named hook on all registered plugins.
 
+        Individual hook implementations that raise exceptions are caught and
+        logged. Other implementations still execute (graceful degradation).
+
         Args:
             hook_name: Name of the hook to call.
             **kwargs: Arguments to pass to hook implementations.
 
         Returns:
-            List of results from all hook implementations.
+            List of results from all hook implementations (failed ones are skipped).
         """
         hook = getattr(self._pm.hook, hook_name, None)
         if hook is None:
             logger.warning("Hook '%s' not found", hook_name)
             return []
-        return hook(**kwargs)
+        try:
+            return hook(**kwargs)
+        except Exception as e:
+            logger.error("Hook '%s' raised an exception: %s", hook_name, e)
+            return []
+
+    def call_hook_safe(self, hook_name: str, **kwargs: Any) -> list[Any]:
+        """Call a hook, collecting results and skipping failed implementations.
+
+        Unlike call_hook(), this calls each implementation individually so one
+        failure does not prevent others from executing.
+
+        Args:
+            hook_name: Name of the hook to call.
+            **kwargs: Arguments to pass to hook implementations.
+
+        Returns:
+            List of successful results (failed implementations are logged and skipped).
+        """
+        hook = getattr(self._pm.hook, hook_name, None)
+        if hook is None:
+            logger.warning("Hook '%s' not found", hook_name)
+            return []
+        results: list[Any] = []
+        callers = hook.get_hookimpls()
+        for impl in callers:
+            try:
+                result = impl.function(**kwargs)
+                results.append(result)
+            except Exception as e:
+                plugin_name = impl.plugin_name or "unknown"
+                logger.error(
+                    "Hook '%s' implementation from '%s' failed: %s",
+                    hook_name,
+                    plugin_name,
+                    e,
+                )
+        return results
+
+    def get_plugin_hooks(self, name: str) -> list[str]:
+        """Return hook names implemented by a specific plugin.
+
+        Useful for debugging, settings UIs, and plugin marketplaces.
+
+        Args:
+            name: Plugin name.
+
+        Returns:
+            List of hook names the plugin implements, or empty list if not found.
+        """
+        plugin = self._lifecycle.get_plugin(name)
+        if plugin is None:
+            return []
+        impl_marker = f"{self._entry_point_group}_impl"
+        hooks: list[str] = []
+        for attr_name in dir(plugin):
+            if attr_name.startswith("_"):
+                continue
+            method = getattr(plugin, attr_name, None)
+            if callable(method) and hasattr(method, impl_marker):
+                hooks.append(attr_name)
+        return hooks
+
+    def get_all_hook_names(self) -> list[str]:
+        """Return all registered hook spec names.
+
+        Returns:
+            List of hook names from all registered specs.
+        """
+        return [name for name in dir(self._pm.hook) if not name.startswith("_")]
 
     def mount_routes(self, app: object, prefix: str = "/api") -> None:
         """Mount FastAPI routes from all active plugins.

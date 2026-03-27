@@ -849,3 +849,157 @@ class TestPluginManager:
     def test_get_extensions_empty(self, app_yaml_path: Path) -> None:
         pm = PluginManager(str(app_yaml_path))
         assert pm.get_extensions(BasePlugin) == []
+
+    # --- #24 plugin introspection ---
+
+    def test_get_plugin_hooks(self, app_yaml_path: Path) -> None:
+        import pluggy
+
+        hookspec = pluggy.HookspecMarker("testapp.plugins")
+        hookimpl = pluggy.HookimplMarker("testapp.plugins")
+
+        class MySpec:
+            @hookspec
+            def my_hook(self) -> str: ...
+
+        class HookPlugin(BasePlugin):
+            name = "sample"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                return "hello"
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_hookspecs(MySpec)
+        pm.register_plugins([HookPlugin])
+
+        hooks = pm.get_plugin_hooks("sample")
+        assert "my_hook" in hooks
+
+    def test_get_plugin_hooks_not_found(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        assert pm.get_plugin_hooks("nonexistent") == []
+
+    def test_get_plugin_hooks_no_hooks(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SamplePlugin])
+        hooks = pm.get_plugin_hooks("sample")
+        assert hooks == []
+
+    def test_get_all_hook_names(self, app_yaml_path: Path) -> None:
+        import pluggy
+
+        hookspec = pluggy.HookspecMarker("testapp.plugins")
+
+        class MySpec:
+            @hookspec
+            def hook_a(self) -> str: ...
+
+            @hookspec
+            def hook_b(self) -> str: ...
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_hookspecs(MySpec)
+
+        names = pm.get_all_hook_names()
+        assert "hook_a" in names
+        assert "hook_b" in names
+
+    def test_get_all_hook_names_empty(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        assert pm.get_all_hook_names() == []
+
+    # --- #25 graceful degradation ---
+
+    def test_call_hook_exception_caught(self, app_yaml_path: Path) -> None:
+        import pluggy
+
+        hookspec = pluggy.HookspecMarker("testapp.plugins")
+        hookimpl = pluggy.HookimplMarker("testapp.plugins")
+
+        class MySpec:
+            @hookspec
+            def my_hook(self) -> str: ...
+
+        class FailingHookPlugin(BasePlugin):
+            name = "sample"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                raise RuntimeError("boom")
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_hookspecs(MySpec)
+        pm.register_plugins([FailingHookPlugin])
+
+        result = pm.call_hook("my_hook")
+        assert result == []
+
+    def test_call_hook_safe_skips_failures(self, app_yaml_path: Path) -> None:
+        import pluggy
+
+        hookspec = pluggy.HookspecMarker("testapp.plugins")
+        hookimpl = pluggy.HookimplMarker("testapp.plugins")
+
+        class MySpec:
+            @hookspec
+            def my_hook(self) -> str: ...
+
+        class GoodPlugin(BasePlugin):
+            name = "sample"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                return "ok"
+
+        class BadPlugin(BasePlugin):
+            name = "another"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                raise RuntimeError("boom")
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_hookspecs(MySpec)
+        pm.register_plugins([GoodPlugin, BadPlugin])
+
+        result = pm.call_hook_safe("my_hook")
+        assert "ok" in result
+        assert len(result) == 1
+
+    def test_call_hook_safe_not_found(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        assert pm.call_hook_safe("nonexistent") == []
+
+    def test_call_hook_safe_all_succeed(self, app_yaml_path: Path) -> None:
+        import pluggy
+
+        hookspec = pluggy.HookspecMarker("testapp.plugins")
+        hookimpl = pluggy.HookimplMarker("testapp.plugins")
+
+        class MySpec:
+            @hookspec
+            def my_hook(self) -> str: ...
+
+        class PluginA(BasePlugin):
+            name = "sample"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                return "a"
+
+        class PluginB(BasePlugin):
+            name = "another"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                return "b"
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_hookspecs(MySpec)
+        pm.register_plugins([PluginA, PluginB])
+
+        result = pm.call_hook_safe("my_hook")
+        assert len(result) == 2
+        assert "a" in result
+        assert "b" in result
