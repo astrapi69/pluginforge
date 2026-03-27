@@ -80,18 +80,24 @@ for plugin in pm.get_active_plugins():
 # Mount FastAPI routes
 from fastapi import FastAPI
 app = FastAPI()
-pm.mount_routes(app)  # Routes at /api/plugins/{name}/
+pm.mount_routes(app)  # Routes under /api/ (configurable prefix)
 ```
 
 ## Features
 
 - **YAML Configuration** - App config, per-plugin config, and i18n strings
 - **Plugin Lifecycle** - init, activate, deactivate with error handling
+- **Hot-Reload** - Swap plugins at runtime without app restart
 - **Enable/Disable** - Control plugins via config lists
 - **Dependency Resolution** - Topological sorting with circular dependency detection
-- **FastAPI Integration** - Auto-mount plugin routes under `/api/plugins/{name}/`
+- **Extension Points** - Query plugins by interface with `get_extensions(type)`
+- **Config Schema Validation** - Declare expected config types per plugin
+- **Health Checks** - Monitor plugin status via `health_check()`
+- **Pre-Activate Hooks** - Reject plugins before activation (license checks, etc.)
+- **FastAPI Integration** - Mount plugin routes with configurable prefix
 - **Alembic Support** - Collect migration directories from plugins
 - **i18n** - Multi-language strings from YAML with fallback
+- **Security** - Plugin name validation and path traversal prevention
 
 For detailed documentation, see the [Wiki](https://github.com/astrapi69/pluginforge/wiki).
 
@@ -136,10 +142,13 @@ The full documentation is available in the [Wiki](https://github.com/astrapi69/p
 - [Discovery and Dependencies](https://github.com/astrapi69/pluginforge/wiki/Discovery-and-Dependencies)
 - [Lifecycle](https://github.com/astrapi69/pluginforge/wiki/Lifecycle)
 - [Hooks](https://github.com/astrapi69/pluginforge/wiki/Hooks)
+- [Extensions](https://github.com/astrapi69/pluginforge/wiki/Extensions)
 - [FastAPI Integration](https://github.com/astrapi69/pluginforge/wiki/FastAPI-Integration)
 - [Alembic Integration](https://github.com/astrapi69/pluginforge/wiki/Alembic-Integration)
 - [i18n](https://github.com/astrapi69/pluginforge/wiki/i18n)
+- [Security](https://github.com/astrapi69/pluginforge/wiki/Security)
 - [Examples](https://github.com/astrapi69/pluginforge/wiki/Examples)
+- [Changelog](https://github.com/astrapi69/pluginforge/wiki/Changelog)
 
 ## Development
 
