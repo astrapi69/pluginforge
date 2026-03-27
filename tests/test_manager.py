@@ -12,8 +12,10 @@ from tests.conftest import (
     CircularA,
     CircularB,
     DependentPlugin,
+    FailingActivatePlugin,
     FailingInitPlugin,
     MissingDepPlugin,
+    OldApiPlugin,
     SamplePlugin,
 )
 
@@ -288,3 +290,402 @@ class TestPluginManager:
 
         pm = PluginManager(str(config_dir / "app.yaml"))
         assert pm._entry_point_group == "pluginforge.plugins"
+
+    # --- #7 reload_config ---
+
+    def test_reload_config(self, app_yaml_path: Path, tmp_config_dir: Path) -> None:
+        import yaml
+
+        pm = PluginManager(str(app_yaml_path))
+        assert pm.get_app_config()["app"]["name"] == "TestApp"
+
+        new_config = {
+            "app": {"name": "UpdatedApp", "default_language": "de"},
+            "plugins": {"entry_point_group": "testapp.plugins"},
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(new_config, f)
+
+        pm.reload_config()
+        assert pm.get_app_config()["app"]["name"] == "UpdatedApp"
+
+    # --- #6 pre_activate callback ---
+
+    def test_pre_activate_allows(self, app_yaml_path: Path) -> None:
+        def allow_all(plugin: BasePlugin, config: dict) -> bool:
+            return True
+
+        pm = PluginManager(str(app_yaml_path), pre_activate=allow_all)
+        pm.register_plugins([SamplePlugin])
+        assert len(pm.get_active_plugins()) == 1
+
+    def test_pre_activate_rejects(self, app_yaml_path: Path) -> None:
+        def reject_all(plugin: BasePlugin, config: dict) -> bool:
+            return False
+
+        pm = PluginManager(str(app_yaml_path), pre_activate=reject_all)
+        pm.register_plugins([SamplePlugin])
+        assert len(pm.get_active_plugins()) == 0
+
+    def test_pre_activate_selective(self, app_yaml_path: Path) -> None:
+        def only_sample(plugin: BasePlugin, config: dict) -> bool:
+            return plugin.name == "sample"
+
+        pm = PluginManager(str(app_yaml_path), pre_activate=only_sample)
+        pm.register_plugins([SamplePlugin, AnotherPlugin])
+        active_names = [p.name for p in pm.get_active_plugins()]
+        assert "sample" in active_names
+        assert "another" not in active_names
+
+    # --- #8 register_plugin (single instance) ---
+
+    def test_register_plugin_instance(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        plugin = SamplePlugin()
+        pm.register_plugin(plugin)
+        assert pm.get_plugin("sample") is plugin
+        assert len(pm.get_active_plugins()) == 1
+
+    def test_register_plugin_with_config(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        plugin = SamplePlugin()
+        pm.register_plugin(plugin, plugin_config={"custom": "value"})
+        assert plugin.config == {"custom": "value"}
+
+    def test_register_plugin_failing_init(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        plugin = FailingInitPlugin()
+        pm.register_plugin(plugin)
+        assert len(pm.get_active_plugins()) == 0
+        assert "failing_init" in pm.get_load_errors()
+
+    def test_register_plugin_pre_activate_rejected(self, app_yaml_path: Path) -> None:
+        def reject(plugin: BasePlugin, config: dict) -> bool:
+            return False
+
+        pm = PluginManager(str(app_yaml_path), pre_activate=reject)
+        plugin = SamplePlugin()
+        pm.register_plugin(plugin)
+        assert len(pm.get_active_plugins()) == 0
+        assert "sample" in pm.get_load_errors()
+
+    def test_register_plugin_failing_activate(
+        self, app_yaml_path: Path, tmp_config_dir: Path
+    ) -> None:
+        import yaml
+
+        config = {
+            "app": {"name": "TestApp"},
+            "plugins": {
+                "entry_point_group": "testapp.plugins",
+                "enabled": ["failing_activate"],
+            },
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f)
+
+        pm = PluginManager(str(app_yaml_path))
+        plugin = FailingActivatePlugin()
+        pm.register_plugin(plugin)
+        assert len(pm.get_active_plugins()) == 0
+        assert "failing_activate" in pm.get_load_errors()
+
+    # --- #9 get_load_errors ---
+
+    def test_get_load_errors_empty(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SamplePlugin])
+        assert pm.get_load_errors() == {}
+
+    def test_get_load_errors_failing_init(self, app_yaml_path: Path, tmp_config_dir: Path) -> None:
+        import yaml
+
+        config = {
+            "app": {"name": "TestApp"},
+            "plugins": {
+                "entry_point_group": "testapp.plugins",
+                "enabled": ["failing_init"],
+            },
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f)
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([FailingInitPlugin])
+        errors = pm.get_load_errors()
+        assert "failing_init" in errors
+        assert "initialize" in errors["failing_init"].lower()
+
+    def test_get_load_errors_missing_dep(self, app_yaml_path: Path, tmp_config_dir: Path) -> None:
+        import yaml
+
+        config = {
+            "app": {"name": "TestApp"},
+            "plugins": {
+                "entry_point_group": "testapp.plugins",
+                "enabled": ["missing_dep"],
+            },
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f)
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([MissingDepPlugin])
+        errors = pm.get_load_errors()
+        assert "missing_dep" in errors
+        assert "dependencies" in errors["missing_dep"].lower()
+
+    def test_get_load_errors_pre_activate_rejected(self, app_yaml_path: Path) -> None:
+        def reject(plugin: BasePlugin, config: dict) -> bool:
+            return False
+
+        pm = PluginManager(str(app_yaml_path), pre_activate=reject)
+        pm.register_plugins([SamplePlugin])
+        errors = pm.get_load_errors()
+        assert "sample" in errors
+        assert "pre-activate" in errors["sample"].lower()
+
+    # --- #10 api_version check ---
+
+    def test_api_version_match_no_warning(
+        self, app_yaml_path: Path, tmp_config_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import yaml
+
+        config = {
+            "app": {"name": "TestApp"},
+            "plugins": {
+                "entry_point_group": "testapp.plugins",
+                "enabled": ["sample"],
+            },
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f)
+
+        pm = PluginManager(str(app_yaml_path), api_version="1")
+        pm.register_plugins([SamplePlugin])
+        assert "api_version" not in caplog.text
+
+    def test_api_version_mismatch_warns(
+        self, app_yaml_path: Path, tmp_config_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+        import yaml
+
+        config = {
+            "app": {"name": "TestApp"},
+            "plugins": {
+                "entry_point_group": "testapp.plugins",
+                "enabled": ["old_api"],
+            },
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f)
+
+        with caplog.at_level(logging.WARNING):
+            pm = PluginManager(str(app_yaml_path), api_version="2")
+            pm.register_plugins([OldApiPlugin])
+
+        assert "old_api" in caplog.text
+        assert "api_version" in caplog.text
+
+    def test_api_version_mismatch_still_loads(
+        self, app_yaml_path: Path, tmp_config_dir: Path
+    ) -> None:
+        import yaml
+
+        config = {
+            "app": {"name": "TestApp"},
+            "plugins": {
+                "entry_point_group": "testapp.plugins",
+                "enabled": ["old_api"],
+            },
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f)
+
+        pm = PluginManager(str(app_yaml_path), api_version="2")
+        pm.register_plugins([OldApiPlugin])
+        assert len(pm.get_active_plugins()) == 1
+
+    def test_api_version_check_on_register_plugin(
+        self, app_yaml_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            pm = PluginManager(str(app_yaml_path), api_version="2")
+            plugin = OldApiPlugin()
+            pm.register_plugin(plugin)
+
+        assert "old_api" in caplog.text
+        assert "api_version" in caplog.text
+        assert len(pm.get_active_plugins()) == 1
+
+    # --- #4 deactivate unregisters from pluggy ---
+
+    def test_deactivate_unregisters_hooks(self, app_yaml_path: Path) -> None:
+        import pluggy
+
+        hookspec = pluggy.HookspecMarker("testapp.plugins")
+        hookimpl = pluggy.HookimplMarker("testapp.plugins")
+
+        class MySpec:
+            @hookspec
+            def my_hook(self) -> str: ...
+
+        class HookPlugin(BasePlugin):
+            name = "sample"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                return "hello"
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_hookspecs(MySpec)
+        pm.register_plugins([HookPlugin])
+        assert pm.call_hook("my_hook") == ["hello"]
+
+        pm.deactivate_plugin("sample")
+        assert pm.call_hook("my_hook") == []
+
+    def test_deactivate_all_unregisters_hooks(self, app_yaml_path: Path) -> None:
+        import pluggy
+
+        hookspec = pluggy.HookspecMarker("testapp.plugins")
+        hookimpl = pluggy.HookimplMarker("testapp.plugins")
+
+        class MySpec:
+            @hookspec
+            def my_hook(self) -> str: ...
+
+        class HookPlugin(BasePlugin):
+            name = "sample"
+
+            @hookimpl
+            def my_hook(self) -> str:
+                return "hello"
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_hookspecs(MySpec)
+        pm.register_plugins([HookPlugin])
+        assert pm.call_hook("my_hook") == ["hello"]
+
+        pm.deactivate_all()
+        assert pm.call_hook("my_hook") == []
+
+    # --- #11 config schema validation ---
+
+    def test_config_schema_valid(self, app_yaml_path: Path) -> None:
+        class SchemaPlugin(BasePlugin):
+            name = "sample"
+            config_schema = {"greeting": str, "max_retries": int}
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SchemaPlugin])
+        assert len(pm.get_active_plugins()) == 1
+
+    def test_config_schema_invalid_type(self, app_yaml_path: Path, tmp_config_dir: Path) -> None:
+        import yaml
+
+        # Write config with wrong type (string instead of int)
+        bad_config = {"greeting": "Hello", "max_retries": "not_a_number"}
+        with open(tmp_config_dir / "plugins" / "sample.yaml", "w", encoding="utf-8") as f:
+            yaml.dump(bad_config, f)
+
+        class SchemaPlugin(BasePlugin):
+            name = "sample"
+            config_schema = {"greeting": str, "max_retries": int}
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SchemaPlugin])
+        assert len(pm.get_active_plugins()) == 0
+        errors = pm.get_load_errors()
+        assert "sample" in errors
+
+    def test_config_schema_missing_key_ok(self, app_yaml_path: Path) -> None:
+        """Missing keys are not an error, only wrong types."""
+
+        class SchemaPlugin(BasePlugin):
+            name = "sample"
+            config_schema = {"greeting": str, "optional_key": int}
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SchemaPlugin])
+        assert len(pm.get_active_plugins()) == 1
+
+    def test_config_schema_none_skips_validation(self, app_yaml_path: Path) -> None:
+        class NoSchemaPlugin(BasePlugin):
+            name = "sample"
+            config_schema = None
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([NoSchemaPlugin])
+        assert len(pm.get_active_plugins()) == 1
+
+    def test_config_schema_on_register_plugin(
+        self, app_yaml_path: Path, tmp_config_dir: Path
+    ) -> None:
+        class SchemaPlugin(BasePlugin):
+            name = "sample"
+            config_schema = {"greeting": str, "max_retries": int}
+
+        pm = PluginManager(str(app_yaml_path))
+        plugin = SchemaPlugin()
+        pm.register_plugin(plugin, plugin_config={"greeting": "Hi", "max_retries": "bad"})
+        assert len(pm.get_active_plugins()) == 0
+        assert "sample" in pm.get_load_errors()
+
+    # --- #12 health check ---
+
+    def test_health_check_default(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SamplePlugin])
+        result = pm.health_check()
+        assert result["sample"] == {"status": "ok"}
+
+    def test_health_check_custom(self, app_yaml_path: Path) -> None:
+        class HealthyPlugin(BasePlugin):
+            name = "sample"
+
+            def health(self) -> dict:
+                return {"status": "ok", "connections": 5}
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([HealthyPlugin])
+        result = pm.health_check()
+        assert result["sample"]["status"] == "ok"
+        assert result["sample"]["connections"] == 5
+
+    def test_health_check_error(self, app_yaml_path: Path) -> None:
+        class UnhealthyPlugin(BasePlugin):
+            name = "sample"
+
+            def health(self) -> dict:
+                raise ConnectionError("API unreachable")
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([UnhealthyPlugin])
+        result = pm.health_check()
+        assert result["sample"]["status"] == "error"
+        assert "API unreachable" in result["sample"]["error"]
+
+    def test_health_check_multiple_plugins(self, app_yaml_path: Path) -> None:
+        class OkPlugin(BasePlugin):
+            name = "sample"
+
+        class FailPlugin(BasePlugin):
+            name = "another"
+
+            def health(self) -> dict:
+                raise RuntimeError("down")
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([OkPlugin, FailPlugin])
+        result = pm.health_check()
+        assert result["sample"]["status"] == "ok"
+        assert result["another"]["status"] == "error"
+
+    def test_health_check_empty(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        assert pm.health_check() == {}

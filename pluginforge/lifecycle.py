@@ -37,12 +37,35 @@ class PluginLifecycle:
         """
         try:
             plugin.init(app_config, plugin_config)
+            self._validate_config(plugin)
             self._initialized[plugin.name] = plugin
             logger.info("Initialized plugin: %s", plugin.name)
             return True
         except Exception as e:
             logger.error("Failed to initialize plugin %s: %s", plugin.name, e)
             return False
+
+    @staticmethod
+    def _validate_config(plugin: BasePlugin) -> None:
+        """Validate plugin config against its config_schema if defined.
+
+        Args:
+            plugin: The plugin whose config to validate.
+
+        Raises:
+            TypeError: If a config value has the wrong type.
+        """
+        if plugin.config_schema is None:
+            return
+        for key, expected_type in plugin.config_schema.items():
+            if key not in plugin.config:
+                continue
+            value = plugin.config[key]
+            if not isinstance(value, expected_type):
+                raise TypeError(
+                    f"Plugin '{plugin.name}' config '{key}': "
+                    f"expected {expected_type.__name__}, got {type(value).__name__}"
+                )
 
     def activate_plugin(self, plugin: BasePlugin) -> bool:
         """Activate an initialized plugin.

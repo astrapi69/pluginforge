@@ -16,6 +16,8 @@ class BasePlugin(ABC):
         depends_on: List of plugin names this plugin depends on.
         app_config: Global application configuration, populated during init().
         config: Plugin configuration, populated during init().
+        config_schema: Optional dict mapping config keys to expected types.
+            If set, config is validated during init().
     """
 
     name: str
@@ -26,6 +28,7 @@ class BasePlugin(ABC):
     depends_on: list[str] = []
     app_config: dict[str, Any] = {}
     config: dict[str, Any] = {}
+    config_schema: dict[str, type] | None = None
 
     def init(self, app_config: dict[str, Any], plugin_config: dict[str, Any]) -> None:
         """Called when the plugin is loaded. Receives app and plugin config.
@@ -50,6 +53,24 @@ class BasePlugin(ABC):
             List of FastAPI APIRouter instances.
         """
         return []
+
+    def get_frontend_manifest(self) -> dict[str, Any] | None:
+        """Return manifest for frontend UI components. Optional.
+
+        Returns:
+            Frontend manifest dict or None.
+        """
+        return None
+
+    def health(self) -> dict[str, Any]:
+        """Return plugin health status. Optional.
+
+        Override to check external dependencies (APIs, databases, etc.).
+
+        Returns:
+            Dict with at least a "status" key ("ok" or "error").
+        """
+        return {"status": "ok"}
 
     def get_migrations_dir(self) -> str | None:
         """Return path to Alembic migration scripts. Optional.

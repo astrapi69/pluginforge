@@ -7,14 +7,16 @@ from pluginforge.base import BasePlugin
 logger = logging.getLogger(__name__)
 
 
-def mount_plugin_routes(app: "object", plugins: list[BasePlugin]) -> None:
+def mount_plugin_routes(app: "object", plugins: list[BasePlugin], prefix: str = "/api") -> None:
     """Mount routes from all plugins onto a FastAPI app.
 
-    Each plugin's routes are mounted under /api/plugins/{plugin_name}/.
+    Plugins bring their own route prefixes via their routers.
+    The prefix parameter is prepended to all plugin routes.
 
     Args:
         app: A FastAPI application instance.
         plugins: List of active plugins.
+        prefix: URL prefix for all plugin routes (default: "/api").
     """
     try:
         from fastapi import FastAPI
@@ -32,6 +34,5 @@ def mount_plugin_routes(app: "object", plugins: list[BasePlugin]) -> None:
         if not routes:
             continue
         for router in routes:
-            prefix = f"/api/plugins/{plugin.name}"
             app.include_router(router, prefix=prefix)
-            logger.info("Mounted routes for plugin '%s' at %s", plugin.name, prefix)
+            logger.info("Mounted routes for plugin '%s' under %s", plugin.name, prefix)

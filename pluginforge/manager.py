@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pluggy
@@ -29,12 +30,23 @@ class PluginManager:
 
     Args:
         config_path: Path to app.yaml configuration file.
+        pre_activate: Optional callback called before plugin activation.
+            Receives (plugin, config) and must return True to allow activation.
+        api_version: Current hook spec version. Plugins with a different
+            api_version will log a warning but still load.
     """
 
-    def __init__(self, config_path: str = "config/app.yaml") -> None:
+    def __init__(
+        self,
+        config_path: str = "config/app.yaml",
+        pre_activate: Callable[[BasePlugin, dict[str, Any]], bool] | None = None,
+        api_version: str = "1",
+    ) -> None:
         self._config_path = Path(config_path)
         self._config_dir = self._config_path.parent
         self._app_config = load_app_config(self._config_path)
+        self._pre_activate = pre_activate
+        self._api_version = api_version
 
         plugins_config = self._app_config.get("plugins", {})
         group = plugins_config.get("entry_point_group", "pluginforge.plugins")
@@ -42,6 +54,7 @@ class PluginManager:
 
         self._pm = pluggy.PluginManager(group)
         self._lifecycle = PluginLifecycle()
+        self._load_errors: dict[str, str] = {}
 
         default_lang = self._app_config.get("app", {}).get("default_language", "en")
         self._i18n = I18n(self._config_dir, default_lang=default_lang)
@@ -65,6 +78,26 @@ class PluginManager:
         """
         return load_plugin_config(self._config_dir, plugin_name)
 
+    def reload_config(self) -> None:
+        """Reload application config from disk.
+
+        Reloads app.yaml and clears the i18n cache. Active plugins are
+        not affected - call deactivate_all() + discover_plugins() to
+        fully restart with new config.
+        """
+        self._app_config = load_app_config(self._config_path)
+        default_lang = self._app_config.get("app", {}).get("default_language", "en")
+        self._i18n = I18n(self._config_dir, default_lang=default_lang)
+        logger.info("Reloaded config from %s", self._config_path)
+
+    def list_available_plugins(self) -> list[str]:
+        """Return names of all discoverable plugins from entry points.
+
+        Returns:
+            List of plugin names without loading them.
+        """
+        return list(discover_entry_points(self._entry_point_group).keys())
+
     def discover_plugins(self) -> None:
         """Discover, filter, resolve dependencies, and activate plugins.
 
@@ -81,7 +114,9 @@ class PluginManager:
 
         missing = check_missing_dependencies(plugins)
         for name, deps in missing.items():
+            msg = f"Missing dependencies: {deps}"
             logger.warning("Plugin '%s' has missing dependencies %s, skipping", name, deps)
+            self._load_errors[name] = msg
             del plugins[name]
 
         try:
@@ -89,18 +124,7 @@ class PluginManager:
         except CircularDependencyError as e:
             raise e
 
-        for name in order:
-            cls = plugins[name]
-            plugin = cls()
-            plugin_config = self.get_plugin_config(name)
-
-            if not self._lifecycle.init_plugin(plugin, self._app_config, plugin_config):
-                continue
-
-            self._pm.register(plugin, name=name)
-
-            if not self._lifecycle.activate_plugin(plugin):
-                self._pm.unregister(name=name)
+        self._activate_ordered(plugins, order)
 
     def register_plugins(self, plugin_classes: list[type[BasePlugin]]) -> None:
         """Register plugin classes directly (without entry point discovery).
@@ -121,22 +145,89 @@ class PluginManager:
 
         missing = check_missing_dependencies(plugins_map)
         for name, deps in missing.items():
+            msg = f"Missing dependencies: {deps}"
             logger.warning("Plugin '%s' has missing dependencies %s, skipping", name, deps)
+            self._load_errors[name] = msg
             del plugins_map[name]
 
         order = resolve_dependencies(plugins_map)
 
+        self._activate_ordered(plugins_map, order)
+
+    def register_plugin(
+        self, plugin: BasePlugin, plugin_config: dict[str, Any] | None = None
+    ) -> None:
+        """Register a single pre-instantiated plugin.
+
+        Useful for tests or dynamically created plugins.
+
+        Args:
+            plugin: An already instantiated plugin.
+            plugin_config: Optional config dict. If None, loaded from YAML.
+        """
+        if plugin_config is None:
+            plugin_config = self.get_plugin_config(plugin.name)
+
+        self._check_api_version(plugin)
+
+        if not self._lifecycle.init_plugin(plugin, self._app_config, plugin_config):
+            self._load_errors[plugin.name] = "Failed to initialize"
+            return
+
+        if self._pre_activate is not None:
+            if not self._pre_activate(plugin, plugin_config):
+                logger.info("Pre-activate check rejected plugin '%s'", plugin.name)
+                self._load_errors[plugin.name] = "Rejected by pre-activate check"
+                return
+
+        self._pm.register(plugin, name=plugin.name)
+
+        if not self._lifecycle.activate_plugin(plugin):
+            self._load_errors[plugin.name] = "Failed to activate"
+            self._pm.unregister(name=plugin.name)
+
+    def _check_api_version(self, plugin: BasePlugin) -> None:
+        """Log a warning if the plugin's api_version differs from the manager's.
+
+        Args:
+            plugin: The plugin to check.
+        """
+        if plugin.api_version != self._api_version:
+            logger.warning(
+                "Plugin '%s' has api_version '%s', expected '%s'",
+                plugin.name,
+                plugin.api_version,
+                self._api_version,
+            )
+
+    def _activate_ordered(self, plugins: dict[str, type[BasePlugin]], order: list[str]) -> None:
+        """Initialize and activate plugins in dependency order.
+
+        Args:
+            plugins: Map of plugin name to plugin class.
+            order: Topologically sorted list of plugin names.
+        """
         for name in order:
-            cls = plugins_map[name]
+            cls = plugins[name]
             plugin = cls()
             plugin_config = self.get_plugin_config(name)
 
+            self._check_api_version(plugin)
+
             if not self._lifecycle.init_plugin(plugin, self._app_config, plugin_config):
+                self._load_errors[name] = "Failed to initialize"
                 continue
+
+            if self._pre_activate is not None:
+                if not self._pre_activate(plugin, plugin_config):
+                    logger.info("Pre-activate check rejected plugin '%s'", name)
+                    self._load_errors[name] = "Rejected by pre-activate check"
+                    continue
 
             self._pm.register(plugin, name=name)
 
             if not self._lifecycle.activate_plugin(plugin):
+                self._load_errors[name] = "Failed to activate"
                 self._pm.unregister(name=name)
 
     def activate_plugin(self, name: str) -> None:
@@ -152,7 +243,7 @@ class PluginManager:
         self._lifecycle.activate_plugin(plugin)
 
     def deactivate_plugin(self, name: str) -> None:
-        """Deactivate a specific active plugin.
+        """Deactivate a specific active plugin and unregister its hooks.
 
         Args:
             name: Plugin name.
@@ -161,7 +252,8 @@ class PluginManager:
         if plugin is None:
             logger.warning("Plugin '%s' not found", name)
             return
-        self._lifecycle.deactivate_plugin(plugin)
+        if self._lifecycle.deactivate_plugin(plugin):
+            self._pm.unregister(name=name)
 
     def get_plugin(self, name: str) -> BasePlugin | None:
         """Get a plugin instance by name.
@@ -182,9 +274,19 @@ class PluginManager:
         """
         return self._lifecycle.get_active_plugins()
 
+    def get_load_errors(self) -> dict[str, str]:
+        """Return errors from plugin loading/activation.
+
+        Returns:
+            Dict mapping plugin name to error message for failed plugins.
+        """
+        return dict(self._load_errors)
+
     def deactivate_all(self) -> None:
-        """Deactivate all active plugins in reverse order."""
-        self._lifecycle.deactivate_all()
+        """Deactivate all active plugins in reverse order and unregister hooks."""
+        for plugin in reversed(self._lifecycle.get_active_plugins()):
+            if self._lifecycle.deactivate_plugin(plugin):
+                self._pm.unregister(name=plugin.name)
 
     def register_hookspecs(self, spec_module: object) -> None:
         """Register hook specifications from a module.
@@ -210,15 +312,16 @@ class PluginManager:
             return []
         return hook(**kwargs)
 
-    def mount_routes(self, app: object) -> None:
+    def mount_routes(self, app: object, prefix: str = "/api") -> None:
         """Mount FastAPI routes from all active plugins.
 
         Args:
             app: A FastAPI application instance.
+            prefix: URL prefix for all plugin routes (default: "/api").
         """
         from pluginforge.fastapi_ext import mount_plugin_routes
 
-        mount_plugin_routes(app, self.get_active_plugins())
+        mount_plugin_routes(app, self.get_active_plugins(), prefix=prefix)
 
     def get_text(self, key: str, lang: str | None = None) -> str:
         """Get an internationalized string.
@@ -241,3 +344,17 @@ class PluginManager:
         from pluginforge.alembic_ext import collect_migrations_dirs
 
         return collect_migrations_dirs(self.get_active_plugins())
+
+    def health_check(self) -> dict[str, dict[str, Any]]:
+        """Run health checks on all active plugins.
+
+        Returns:
+            Dict mapping plugin name to health status dict.
+        """
+        results: dict[str, dict[str, Any]] = {}
+        for plugin in self.get_active_plugins():
+            try:
+                results[plugin.name] = plugin.health()
+            except Exception as e:
+                results[plugin.name] = {"status": "error", "error": str(e)}
+        return results

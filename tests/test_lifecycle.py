@@ -89,3 +89,27 @@ class TestPluginLifecycle:
         lc.init_plugin(plugin, {}, {})
         lc.activate_plugin(plugin)
         assert not lc.deactivate_plugin(plugin)
+
+    def test_config_schema_validation_rejects_bad_type(self) -> None:
+        from pluginforge.base import BasePlugin
+
+        class SchemaPlugin(BasePlugin):
+            name = "schema_test"
+            config_schema = {"port": int}
+
+        lc = PluginLifecycle()
+        plugin = SchemaPlugin()
+        result = lc.init_plugin(plugin, {}, {"port": "not_int"})
+        assert result is False
+
+    def test_config_schema_validation_passes_good_type(self) -> None:
+        from pluginforge.base import BasePlugin
+
+        class SchemaPlugin(BasePlugin):
+            name = "schema_test"
+            config_schema = {"port": int}
+
+        lc = PluginLifecycle()
+        plugin = SchemaPlugin()
+        result = lc.init_plugin(plugin, {}, {"port": 8080})
+        assert result is True

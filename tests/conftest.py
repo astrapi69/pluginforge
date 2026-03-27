@@ -70,6 +70,11 @@ class FailingDeactivatePlugin(BasePlugin):
         raise RuntimeError("Deactivate failed")
 
 
+class OldApiPlugin(BasePlugin):
+    name = "old_api"
+    api_version = "0"
+
+
 # --- Fixtures ---
 
 
