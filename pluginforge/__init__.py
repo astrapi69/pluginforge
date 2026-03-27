@@ -5,7 +5,7 @@ from pluginforge.discovery import CircularDependencyError
 from pluginforge.manager import PluginManager
 from pluginforge.security import InvalidPluginNameError
 
-__version__ = "0.3.0"
+__version__ = "0.5.0"
 __all__ = [
     "BasePlugin",
     "CircularDependencyError",

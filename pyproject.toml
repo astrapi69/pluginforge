@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pluginforge"
-version = "0.4.0"
+version = "0.5.0"
 description = "Application-agnostic plugin framework built on pluggy"
 authors = ["Asterios Raptis"]
 license = "MIT"
