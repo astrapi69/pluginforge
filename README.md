@@ -149,6 +149,7 @@ The full documentation is available in the [Wiki](https://github.com/astrapi69/p
 - [Security](https://github.com/astrapi69/pluginforge/wiki/Security)
 - [Examples](https://github.com/astrapi69/pluginforge/wiki/Examples)
 - [Changelog](https://github.com/astrapi69/pluginforge/wiki/Changelog)
+- [Roadmap](https://github.com/astrapi69/pluginforge/wiki/Roadmap)
 
 ## Development
 

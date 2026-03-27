@@ -3,12 +3,14 @@
 ## Was ist PluginForge?
 
 Anwendungsunabhaengiges Python-Plugin-Framework. Baut auf pluggy auf und ergaenzt:
-YAML-Config, Lifecycle, Enable/Disable, Abhaengigkeiten, FastAPI-Integration, i18n.
+YAML-Config, Lifecycle, Enable/Disable, Abhaengigkeiten, FastAPI-Integration, i18n,
+Extension Points, Hot-Reload, Health Checks, Config Schema Validation, Security.
 
 **Repository:** https://github.com/astrapi69/pluginforge
 **Architektur:** docs/ARCHITECTURE.md (lesen vor jeder Aenderung)
+**Wiki:** https://github.com/astrapi69/pluginforge/wiki
 **Lizenz:** MIT
-**Ziel:** v0.2.0 auf PyPI publizieren
+**Aktuelle Version:** v0.5.0 auf PyPI
 
 ## Tech Stack
 
@@ -32,6 +34,7 @@ pluginforge/
 │   ├── config.py            # YAML-Config laden/mergen
 │   ├── discovery.py         # Entry Point Discovery + Dependency Resolution
 │   ├── lifecycle.py         # init/activate/deactivate Steuerung
+│   ├── security.py          # Plugin-Name-Validierung, Path Traversal Prevention
 │   ├── fastapi_ext.py       # FastAPI-Router mounten (optional)
 │   ├── alembic_ext.py       # Alembic-Migrations sammeln (optional)
 │   └── i18n.py              # Mehrsprachige Strings aus YAML
@@ -53,6 +56,7 @@ pluginforge/
 - Logging: `logging.getLogger(__name__)`, keine eigene Log-Config
 - Optional Dependencies: Lazy Import mit klarer Fehlermeldung wenn nicht installiert
 - Keine hartcodierten Strings, alles via Config
+- Plugin-Namen werden validiert (security.py) - keine Pfad-Separatoren, max 64 Zeichen
 
 ## BasePlugin + pluggy Hook-Integration (Design-Klarstellung)
 
@@ -71,10 +75,14 @@ hookimpl = pluggy.HookimplMarker("myapp")
 class ExportPlugin(BasePlugin):
     name = "export"
     depends_on = ["storage"]
+    config_schema = {"formats": list, "pandoc_path": str}
 
     def activate(self) -> None:
         # PluginForge Lifecycle
         self.engine = self.config.get("engine", "default")
+
+    def health(self) -> dict:
+        return {"status": "ok", "engine": self.engine}
 
     @hookimpl
     def on_document_save(self, document: dict) -> None:
@@ -89,29 +97,42 @@ Wichtig: Ab pluggy 1.1.0 brauchen Hook Wrapper explizit `wrapper=True`.
 ### PluginManager Ablauf
 
 ```
-1. __init__(config_path)
+1. __init__(config_path, pre_activate=None, api_version="1")
    -> config.py: app.yaml laden
    -> pluggy.PluginManager erstellen mit entry_point_group aus Config
 
-2. discover_plugins()
-   -> discovery.py: Entry Points laden
+2. discover_plugins() / register_plugins([classes]) / register_plugin(instance)
+   -> discovery.py: Entry Points laden (oder Klassen/Instanzen direkt)
    -> Gegen enabled/disabled filtern
+   -> Plugin-Namen validieren (security.py)
    -> depends_on pruefen (topologische Sortierung)
+   -> api_version Kompatibilitaet pruefen (Warnung bei Mismatch)
    -> Fuer jeden aktiven Plugin:
       a) Plugin-YAML laden (config/plugins/{name}.yaml)
       b) plugin.init(app_config, plugin_config)
-      c) Bei pluggy registrieren
-      d) plugin.activate()
+      c) config_schema validieren
+      d) pre_activate Callback (wenn konfiguriert)
+      e) Bei pluggy registrieren
+      f) plugin.activate()
+   -> Fehler werden in _load_errors gesammelt
 
-3. call_hook(hook_name, **kwargs)
+3. call_hook(hook_name, **kwargs) / call_hook_safe(hook_name, **kwargs)
    -> Delegiert an pluggy pm.hook.{hook_name}(**kwargs)
+   -> call_hook: faengt Exceptions, gibt [] zurueck
+   -> call_hook_safe: ruft jede Implementation einzeln auf, uebersprungen fehlerhafte
 
-4. mount_routes(fastapi_app)
+4. get_extensions(ExtensionPoint)
+   -> Alle aktiven Plugins zurueckgeben die den Typ implementieren
+
+5. mount_routes(fastapi_app, prefix="/api")
    -> Fuer jeden aktiven Plugin mit get_routes():
-      Router unter /api/plugins/{name}/ mounten
+      Router unter konfigurierbarem Prefix mounten
 
-5. deactivate_all()
-   -> Umgekehrte Reihenfolge: deactivate() fuer jeden Plugin
+6. reload_plugin(name)
+   -> deactivate -> re-import Modul -> re-init -> activate
+
+7. deactivate_all()
+   -> Umgekehrte Reihenfolge: deactivate() + pm.unregister() fuer jeden Plugin
 ```
 
 ### Config-Merge-Logik
@@ -123,6 +144,7 @@ App-Config (config/app.yaml)
 ```
 
 Fehlende Config-Dateien sind kein Fehler, nur leere Defaults.
+Config-Schema wird validiert wenn config_schema auf dem Plugin definiert ist.
 
 ### Dependency Resolution
 
@@ -130,7 +152,7 @@ Fehlende Config-Dateien sind kein Fehler, nur leere Defaults.
 # Topologische Sortierung
 # Input: {"a": ["b"], "b": [], "c": ["a", "b"]}
 # Output: ["b", "a", "c"]
-# Zirkulaere Abhaengigkeit -> Exception
+# Zirkulaere Abhaengigkeit -> CircularDependencyError
 ```
 
 ## pyproject.toml Vorgaben
@@ -138,7 +160,7 @@ Fehlende Config-Dateien sind kein Fehler, nur leere Defaults.
 ```toml
 [tool.poetry]
 name = "pluginforge"
-version = "0.2.0"
+version = "0.5.0"
 description = "Application-agnostic plugin framework built on pluggy"
 authors = ["Asterios Raptis"]
 license = "MIT"
@@ -186,57 +208,37 @@ build-backend = "poetry.core.masonry.api"
 ## Makefile Targets
 
 ```makefile
-install:        poetry install --with dev
+install:        poetry install
+install-dev:    poetry install --with dev
 test:           poetry run pytest
+test-fast:      poetry run pytest -q --maxfail=1 --disable-warnings --no-cov
 lint:           poetry run ruff check pluginforge/ tests/
 format:         poetry run ruff format pluginforge/ tests/
-typecheck:      poetry run mypy pluginforge/ (optional, spaeter)
+ci:             lint + format-check + test
+bump-patch:     poetry version patch
+bump-minor:     poetry version minor
 build:          poetry build
-publish:        poetry publish
-clean:          rm -rf dist/ .pytest_cache/ .coverage
+publish:        ci + build + poetry publish
+clean:          rm -rf dist/ build/ .pytest_cache/ .coverage
+help:           Zeigt alle Targets
 ```
 
 ## Tests
 
-- Jede Komponente (base, manager, config, discovery, lifecycle, fastapi_ext, i18n) hat eigene Testdatei
+- Jede Komponente hat eigene Testdatei (base, manager, config, discovery, lifecycle, fastapi_ext, alembic_ext, i18n, security)
 - conftest.py: Fixtures fuer temporaere YAML-Configs und Sample-Plugins
 - Sample-Plugins als Klassen in tests/ definieren (nicht als Entry Points)
 - Fuer Entry Point Tests: `pm.register()` direkt nutzen statt echte Entry Points
+- Aktuell: 162 Tests, 93% Coverage
 - Ziel: >= 90% Coverage
-
-### Wichtige Testfaelle
-
-1. Plugin laden, aktivieren, deaktivieren
-2. YAML-Config laden (app, plugin, i18n)
-3. Fehlende Config-Datei: kein Fehler, leere Defaults
-4. Enable/Disable per Config
-5. Abhaengigkeit vorhanden: Plugin wird geladen
-6. Abhaengigkeit fehlt: Plugin wird uebersprungen, Warnung
-7. Zirkulaere Abhaengigkeit: Exception
-8. FastAPI-Router mounten (wenn fastapi installiert)
-9. i18n: String in verschiedenen Sprachen abrufen
-10. i18n: Fallback auf Default-Sprache wenn Key fehlt
-11. Plugin mit falscher api_version: Warnung, trotzdem laden
-
-## Beispiel-App (examples/simple_app/)
-
-Eine minimale FastAPI-App die zeigt wie PluginForge funktioniert:
-
-- `config/app.yaml`: App-Name, enabled Plugins
-- `config/plugins/hello.yaml`: Greeting-Text
-- `config/i18n/de.yaml` + `en.yaml`: UI-Strings
-- `app.py`: FastAPI + PluginManager Setup
-- `plugins/hello_plugin.py`: SimplePlugin das einen /hello Endpoint bereitstellt
 
 ## Release-Workflow
 
 1. Alle Tests gruen, >= 90% Coverage
-2. README mit Quickstart, Installation, Beispiel
-3. `poetry build`
-4. `poetry publish -r testpypi` (Test)
-5. `pip install -i https://test.pypi.org/simple/ pluginforge` (Verify)
-6. `poetry publish` (Production)
-7. Git Tag `v0.1.0`
+2. `make bump-minor` (oder bump-patch)
+3. `make publish` (fuehrt CI + Build + Publish aus)
+4. Git Tag `v0.x.0`
+5. `git push origin main --tags`
 
 ## Kontext: Warum PluginForge existiert
 
