@@ -135,6 +135,17 @@ class PluginLifecycle:
         """
         return self._initialized.get(name)
 
+    def remove_plugin(self, name: str) -> None:
+        """Remove a plugin from all lifecycle tracking.
+
+        Used during hot-reload to clean up before re-instantiation.
+
+        Args:
+            name: Plugin name.
+        """
+        self._initialized.pop(name, None)
+        self._active.pop(name, None)
+
     def is_active(self, name: str) -> bool:
         """Check if a plugin is currently active.
 

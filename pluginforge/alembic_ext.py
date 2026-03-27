@@ -28,6 +28,15 @@ def collect_migrations_dirs(plugins: list[BasePlugin]) -> dict[str, str]:
                 "Plugin '%s' migrations dir does not exist: %s", plugin.name, migrations_dir
             )
             continue
-        migrations[plugin.name] = str(path)
-        logger.info("Collected migrations for plugin '%s': %s", plugin.name, migrations_dir)
+        # Ensure resolved path doesn't escape via symlinks
+        resolved = path.resolve()
+        if not resolved.is_dir():
+            logger.warning(
+                "Plugin '%s' migrations dir resolves to non-directory: %s",
+                plugin.name,
+                resolved,
+            )
+            continue
+        migrations[plugin.name] = str(resolved)
+        logger.info("Collected migrations for plugin '%s': %s", plugin.name, resolved)
     return migrations

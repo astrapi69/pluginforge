@@ -113,3 +113,18 @@ class TestPluginLifecycle:
         plugin = SchemaPlugin()
         result = lc.init_plugin(plugin, {}, {"port": 8080})
         assert result is True
+
+    def test_remove_plugin(self) -> None:
+        lc = PluginLifecycle()
+        plugin = SamplePlugin()
+        lc.init_plugin(plugin, {}, {})
+        lc.activate_plugin(plugin)
+        assert lc.is_active("sample")
+
+        lc.remove_plugin("sample")
+        assert lc.get_plugin("sample") is None
+        assert not lc.is_active("sample")
+
+    def test_remove_nonexistent_plugin(self) -> None:
+        lc = PluginLifecycle()
+        lc.remove_plugin("nonexistent")  # should not raise

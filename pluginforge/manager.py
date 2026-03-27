@@ -1,6 +1,8 @@
 """Central PluginManager that orchestrates config, discovery, lifecycle, and hooks."""
 
+import importlib
 import logging
+import sys
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -18,6 +20,7 @@ from pluginforge.discovery import (
 )
 from pluginforge.i18n import I18n
 from pluginforge.lifecycle import PluginLifecycle
+from pluginforge.security import validate_plugin_name
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +168,8 @@ class PluginManager:
             plugin: An already instantiated plugin.
             plugin_config: Optional config dict. If None, loaded from YAML.
         """
+        validate_plugin_name(plugin.name)
+
         if plugin_config is None:
             plugin_config = self.get_plugin_config(plugin.name)
 
@@ -208,6 +213,7 @@ class PluginManager:
             order: Topologically sorted list of plugin names.
         """
         for name in order:
+            validate_plugin_name(name)
             cls = plugins[name]
             plugin = cls()
             plugin_config = self.get_plugin_config(name)
@@ -358,3 +364,79 @@ class PluginManager:
             except Exception as e:
                 results[plugin.name] = {"status": "error", "error": str(e)}
         return results
+
+    def reload_plugin(self, name: str) -> bool:
+        """Hot-reload a plugin: deactivate, re-import module, re-init, activate.
+
+        The plugin's module is reloaded from disk so code changes take effect
+        without restarting the application.
+
+        Args:
+            name: Name of the plugin to reload.
+
+        Returns:
+            True if reload succeeded, False otherwise.
+        """
+        plugin = self._lifecycle.get_plugin(name)
+        if plugin is None:
+            logger.warning("Cannot reload unknown plugin '%s'", name)
+            return False
+
+        plugin_cls = type(plugin)
+        module_name = plugin_cls.__module__
+
+        # Deactivate and unregister
+        if self._lifecycle.is_active(name):
+            self._lifecycle.deactivate_plugin(plugin)
+            self._pm.unregister(name=name)
+
+        # Remove from lifecycle tracking
+        self._lifecycle.remove_plugin(name)
+
+        # Reload the module
+        try:
+            module = sys.modules.get(module_name)
+            if module is not None:
+                module = importlib.reload(module)
+                plugin_cls = getattr(module, plugin_cls.__name__)
+        except Exception as e:
+            logger.error("Failed to reload module '%s': %s", module_name, e)
+            self._load_errors[name] = f"Failed to reload module: {e}"
+            return False
+
+        # Re-instantiate and activate
+        new_plugin = plugin_cls()
+        plugin_config = self.get_plugin_config(name)
+
+        if not self._lifecycle.init_plugin(new_plugin, self._app_config, plugin_config):
+            self._load_errors[name] = "Failed to initialize after reload"
+            return False
+
+        if self._pre_activate is not None:
+            if not self._pre_activate(new_plugin, plugin_config):
+                self._load_errors[name] = "Rejected by pre-activate check after reload"
+                return False
+
+        self._pm.register(new_plugin, name=name)
+
+        if not self._lifecycle.activate_plugin(new_plugin):
+            self._load_errors[name] = "Failed to activate after reload"
+            self._pm.unregister(name=name)
+            return False
+
+        logger.info("Reloaded plugin '%s'", name)
+        return True
+
+    def get_extensions(self, extension_point: type) -> list[BasePlugin]:
+        """Return all active plugins that implement a given extension point.
+
+        An extension point is any class or ABC. This method returns all active
+        plugins that are instances of that type.
+
+        Args:
+            extension_point: The extension point class to filter by.
+
+        Returns:
+            List of active plugins implementing the extension point.
+        """
+        return [p for p in self.get_active_plugins() if isinstance(p, extension_point)]

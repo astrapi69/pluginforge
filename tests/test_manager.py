@@ -689,3 +689,163 @@ class TestPluginManager:
     def test_health_check_empty(self, app_yaml_path: Path) -> None:
         pm = PluginManager(str(app_yaml_path))
         assert pm.health_check() == {}
+
+    # --- #14 reload_plugin ---
+
+    def test_reload_plugin(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SamplePlugin])
+        assert pm.get_plugin("sample") is not None
+
+        result = pm.reload_plugin("sample")
+        assert result is True
+        plugin = pm.get_plugin("sample")
+        assert plugin is not None
+        assert plugin.name == "sample"
+        assert len(pm.get_active_plugins()) == 1
+
+    def test_reload_plugin_unknown(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        assert pm.reload_plugin("nonexistent") is False
+
+    def test_reload_plugin_preserves_config(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SamplePlugin])
+        result = pm.reload_plugin("sample")
+        assert result is True
+        plugin = pm.get_plugin("sample")
+        assert plugin is not None
+        assert plugin.config.get("greeting") == "Hello"
+
+    def test_reload_plugin_with_pre_activate(self, app_yaml_path: Path) -> None:
+        calls: list[str] = []
+
+        def track(plugin: BasePlugin, config: dict) -> bool:
+            calls.append(plugin.name)
+            return True
+
+        pm = PluginManager(str(app_yaml_path), pre_activate=track)
+        pm.register_plugins([SamplePlugin])
+        calls.clear()
+
+        pm.reload_plugin("sample")
+        assert "sample" in calls
+
+    def test_reload_plugin_pre_activate_rejects(self, app_yaml_path: Path) -> None:
+        first_call = [True]
+
+        def reject_second(plugin: BasePlugin, config: dict) -> bool:
+            if first_call[0]:
+                first_call[0] = False
+                return True
+            return False
+
+        pm = PluginManager(str(app_yaml_path), pre_activate=reject_second)
+        pm.register_plugins([SamplePlugin])
+        assert len(pm.get_active_plugins()) == 1
+
+        result = pm.reload_plugin("sample")
+        assert result is False
+        assert "sample" in pm.get_load_errors()
+
+    # --- #15 security - path traversal ---
+
+    def test_path_traversal_plugin_name_rejected(self, app_yaml_path: Path) -> None:
+        from pluginforge.security import InvalidPluginNameError
+
+        class EvilPlugin(BasePlugin):
+            name = "../../etc/passwd"
+
+        pm = PluginManager(str(app_yaml_path))
+        with pytest.raises(InvalidPluginNameError):
+            pm.register_plugin(EvilPlugin())
+
+    def test_path_traversal_in_register_plugins(
+        self, app_yaml_path: Path, tmp_config_dir: Path
+    ) -> None:
+        import yaml
+        from pluginforge.security import InvalidPluginNameError
+
+        config = {
+            "app": {"name": "TestApp"},
+            "plugins": {
+                "entry_point_group": "testapp.plugins",
+                "enabled": ["../evil"],
+            },
+        }
+        with open(app_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f)
+
+        class EvilPlugin(BasePlugin):
+            name = "../evil"
+
+        pm = PluginManager(str(app_yaml_path))
+        with pytest.raises(InvalidPluginNameError):
+            pm.register_plugins([EvilPlugin])
+
+    # --- #16 get_extensions ---
+
+    def test_get_extensions_basic(self, app_yaml_path: Path) -> None:
+        from abc import ABC, abstractmethod
+
+        class Exportable(ABC):
+            @abstractmethod
+            def export(self) -> str: ...
+
+        class ExportPlugin(BasePlugin, Exportable):
+            name = "sample"
+
+            def export(self) -> str:
+                return "exported"
+
+        class PlainPlugin(BasePlugin):
+            name = "another"
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([ExportPlugin, PlainPlugin])
+
+        extensions = pm.get_extensions(Exportable)
+        assert len(extensions) == 1
+        assert extensions[0].name == "sample"
+
+    def test_get_extensions_multiple(self, app_yaml_path: Path) -> None:
+        from abc import ABC, abstractmethod
+
+        class Exportable(ABC):
+            @abstractmethod
+            def export(self) -> str: ...
+
+        class ExportA(BasePlugin, Exportable):
+            name = "sample"
+
+            def export(self) -> str:
+                return "a"
+
+        class ExportB(BasePlugin, Exportable):
+            name = "another"
+
+            def export(self) -> str:
+                return "b"
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([ExportA, ExportB])
+
+        extensions = pm.get_extensions(Exportable)
+        assert len(extensions) == 2
+
+    def test_get_extensions_none_match(self, app_yaml_path: Path) -> None:
+        from abc import ABC, abstractmethod
+
+        class Exportable(ABC):
+            @abstractmethod
+            def export(self) -> str: ...
+
+        pm = PluginManager(str(app_yaml_path))
+        pm.register_plugins([SamplePlugin])
+
+        extensions = pm.get_extensions(Exportable)
+        assert extensions == []
+
+    def test_get_extensions_empty(self, app_yaml_path: Path) -> None:
+        pm = PluginManager(str(app_yaml_path))
+        assert pm.get_extensions(BasePlugin) == []
