@@ -90,7 +90,7 @@ bump-major: ## Bump major version (0.1.0 -> 1.0.0)
 # Build & Publish
 # ---------------------------------------------------------------------------
 
-.PHONY: build publish publish-test
+.PHONY: build publish
 
 build: ## Build distribution package
 	poetry build
